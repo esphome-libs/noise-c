@@ -4,7 +4,7 @@
 #define NOISE_USE_AES 0
 #endif
 
-#ifndef NOISE_USE_CRUVE25519
+#ifndef NOISE_USE_CURVE25519
 #define NOISE_USE_CURVE25519 1
 #endif
 
