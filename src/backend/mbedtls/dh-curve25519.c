@@ -10,11 +10,6 @@
 #include <mbedtls/ctr_drbg.h>
 #include <string.h>
 
-/* Check if mbedTLS has Curve25519 support */
-#if !defined(MBEDTLS_ECP_DP_CURVE25519) || MBEDTLS_VERSION_NUMBER < 0x02050000
-/* mbedTLS doesn't have Curve25519 support, use reference implementation */
-#include "../ref/dh-curve25519.c"
-#else
 
 typedef struct
 {
@@ -237,5 +232,4 @@ NoiseDHState *noise_curve25519_new(void)
     return &(state->parent);
 }
 
-#endif  // MBEDTLS_ECP_DP_CURVE25519 check
 #endif  // NOISE_USE_MBEDTLS && NOISE_USE_CURVE25519
