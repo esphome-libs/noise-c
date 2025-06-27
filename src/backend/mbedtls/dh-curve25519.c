@@ -42,34 +42,64 @@ static int noise_curve25519_generate_keypair
     if (ret != 0)
         goto cleanup;
     
+    /* Generate keypair using ECP directly since we need access to private key */
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d;
+    mbedtls_ecp_point Q;
+    
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_ecp_point_init(&Q);
+    
+    /* Load Curve25519 group */
+    ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_ecp_point_free(&Q);
+        goto cleanup;
+    }
+    
     /* Generate keypair */
-    ret = mbedtls_ecdh_gen_public(&ecdh.ctx.mbed_ecdh.grp, &ecdh.ctx.mbed_ecdh.d, 
-                                  &ecdh.ctx.mbed_ecdh.Q, mbedtls_ctr_drbg_random, &ctr_drbg);
-    if (ret != 0)
+    ret = mbedtls_ecp_gen_keypair(&grp, &d, &Q,
+                                  mbedtls_ctr_drbg_random, &ctr_drbg);
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_ecp_point_free(&Q);
         goto cleanup;
+    }
     
-    /* Export private key (32 bytes) */
-    ret = mbedtls_mpi_write_binary(&ecdh.ctx.mbed_ecdh.d, st->private_key, 32);
-    if (ret != 0)
+    /* Export private key */
+    ret = mbedtls_mpi_write_binary(&d, st->private_key, 32);
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_ecp_point_free(&Q);
         goto cleanup;
+    }
     
-    /* For Curve25519, we need to export the X coordinate of the public key */
-    /* Since it's a Montgomery curve, we handle it specially */
+    /* Export public key - for Curve25519 we need the X coordinate */
     size_t olen;
-    uint8_t buf[65];
-    ret = mbedtls_ecp_point_write_binary(&ecdh.ctx.mbed_ecdh.grp, &ecdh.ctx.mbed_ecdh.Q,
-                                         MBEDTLS_ECP_PF_UNCOMPRESSED, &olen, buf, sizeof(buf));
+    uint8_t buf[66];
+    ret = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
+                                         &olen, buf, sizeof(buf));
     if (ret == 0) {
-        /* For Curve25519, the public key is just the X coordinate (32 bytes) */
-        /* Skip the format byte if present */
-        if (olen == 33) {
+        /* For Curve25519, extract just the X coordinate */
+        if (olen == 33 && buf[0] == 0x04) {
+            /* Uncompressed format with 0x04 prefix */
             memcpy(st->public_key, buf + 1, 32);
         } else if (olen == 32) {
+            /* Raw X coordinate */
             memcpy(st->public_key, buf, 32);
         } else {
             ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
         }
     }
+    
+    mbedtls_ecp_group_free(&grp);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_point_free(&Q);
     
     if (ret == 0)
         state->key_type = NOISE_KEY_TYPE_KEYPAIR;
@@ -96,41 +126,46 @@ static int noise_curve25519_set_keypair_private
     (NoiseDHState *state, const uint8_t *private_key)
 {
     NoiseCurve25519State *st = (NoiseCurve25519State *)state;
-    mbedtls_ecdh_context ecdh;
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d;
+    mbedtls_ecp_point Q;
     int ret;
     
-    mbedtls_ecdh_init(&ecdh);
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_ecp_point_init(&Q);
     
-    /* Setup Curve25519 */
-    ret = mbedtls_ecdh_setup(&ecdh, MBEDTLS_ECP_DP_CURVE25519);
+    /* Load Curve25519 group */
+    ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
     if (ret != 0)
         goto cleanup;
     
     /* Import private key */
-    ret = mbedtls_mpi_read_binary(&ecdh.ctx.mbed_ecdh.d, private_key, 32);
+    ret = mbedtls_mpi_read_binary(&d, private_key, 32);
     if (ret != 0)
         goto cleanup;
     
     /* Calculate public key: Q = d * G */
-    ret = mbedtls_ecp_mul(&ecdh.ctx.mbed_ecdh.grp, &ecdh.ctx.mbed_ecdh.Q, 
-                          &ecdh.ctx.mbed_ecdh.d, &ecdh.ctx.mbed_ecdh.grp.G, NULL, NULL);
+    ret = mbedtls_ecp_mul(&grp, &Q, &d, &grp.G, NULL, NULL);
     if (ret != 0)
         goto cleanup;
     
     /* Store private key */
     memcpy(st->private_key, private_key, 32);
     
-    /* Export public key */
+    /* Export public key - for Curve25519 we need the X coordinate */
+    /* Use the raw scalar multiplication result */
     size_t olen;
-    uint8_t buf[65];
-    ret = mbedtls_ecp_point_write_binary(&ecdh.ctx.mbed_ecdh.grp, &ecdh.ctx.mbed_ecdh.Q,
-                                         MBEDTLS_ECP_PF_UNCOMPRESSED, &olen, buf, sizeof(buf));
+    uint8_t buf[66];
+    ret = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
+                                         &olen, buf, sizeof(buf));
     if (ret == 0) {
-        /* For Curve25519, the public key is just the X coordinate (32 bytes) */
-        /* Skip the format byte if present */
-        if (olen == 33) {
+        /* For Curve25519, extract just the X coordinate */
+        if (olen == 33 && buf[0] == 0x04) {
+            /* Uncompressed format with 0x04 prefix */
             memcpy(st->public_key, buf + 1, 32);
         } else if (olen == 32) {
+            /* Raw X coordinate */
             memcpy(st->public_key, buf, 32);
         } else {
             ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
@@ -141,7 +176,9 @@ static int noise_curve25519_set_keypair_private
         state->key_type = NOISE_KEY_TYPE_KEYPAIR;
     
 cleanup:
-    mbedtls_ecdh_free(&ecdh);
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
     
     return ret == 0 ? NOISE_ERROR_NONE : NOISE_ERROR_INVALID_PRIVATE_KEY;
 }
@@ -180,49 +217,50 @@ static int noise_curve25519_calculate
     const NoiseCurve25519State *priv_st = (const NoiseCurve25519State *)private_key_state;
     const NoiseCurve25519State *pub_st = (const NoiseCurve25519State *)public_key_state;
     mbedtls_ecdh_context ecdh;
-    mbedtls_mpi z;
+    mbedtls_ecp_keypair keypair;
     int ret;
     
     mbedtls_ecdh_init(&ecdh);
-    mbedtls_mpi_init(&z);
+    mbedtls_ecp_keypair_init(&keypair);
     
     /* Setup Curve25519 */
     ret = mbedtls_ecdh_setup(&ecdh, MBEDTLS_ECP_DP_CURVE25519);
     if (ret != 0)
         goto cleanup;
     
-    /* Import private key */
-    ret = mbedtls_mpi_read_binary(&ecdh.ctx.mbed_ecdh.d, priv_st->private_key, 32);
+    /* Setup our keypair */
+    ret = mbedtls_ecp_group_load(&keypair.grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0)
+        goto cleanup;
+        
+    ret = mbedtls_mpi_read_binary(&keypair.d, priv_st->private_key, 32);
     if (ret != 0)
         goto cleanup;
     
-    /* Import public key - for Curve25519, this is just the X coordinate */
-    /* We need to reconstruct the point from the X coordinate */
-    uint8_t buf[33];
-    buf[0] = 0x04; /* Uncompressed format */
-    memcpy(buf + 1, pub_st->public_key, 32);
+    /* We don't need to set the public key Q for ECDH calculation */
+    ret = mbedtls_ecdh_get_params(&ecdh, &keypair, MBEDTLS_ECDH_OURS);
+    if (ret != 0)
+        goto cleanup;
     
-    ret = mbedtls_ecp_point_read_binary(&ecdh.ctx.mbed_ecdh.grp, &ecdh.ctx.mbed_ecdh.Qp, buf, 33);
-    if (ret != 0) {
-        /* Try without format byte for Montgomery curves */
-        ret = mbedtls_ecp_point_read_binary(&ecdh.ctx.mbed_ecdh.grp, &ecdh.ctx.mbed_ecdh.Qp, 
-                                          pub_st->public_key, 32);
+    /* Import peer's public key */
+    ret = mbedtls_ecdh_read_public(&ecdh, pub_st->public_key, 32);
+    if (ret != 0)
+        goto cleanup;
+    
+    /* Compute shared secret */
+    size_t olen;
+    ret = mbedtls_ecdh_calc_secret(&ecdh, &olen, shared_key, 32, NULL, NULL);
+    if (ret != 0)
+        goto cleanup;
+    
+    /* Verify we got 32 bytes */
+    if (olen != 32) {
+        ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+        goto cleanup;
     }
     
-    if (ret != 0)
-        goto cleanup;
-    
-    /* Perform ECDH computation */
-    ret = mbedtls_ecdh_compute_shared(&ecdh.ctx.mbed_ecdh.grp, &z, &ecdh.ctx.mbed_ecdh.Qp, 
-                                     &ecdh.ctx.mbed_ecdh.d, NULL, NULL);
-    if (ret != 0)
-        goto cleanup;
-    
-    /* Export shared secret (32 bytes) */
-    ret = mbedtls_mpi_write_binary(&z, shared_key, 32);
-    
 cleanup:
-    mbedtls_mpi_free(&z);
+    mbedtls_ecp_keypair_free(&keypair);
     mbedtls_ecdh_free(&ecdh);
     
     /* Always return success to avoid timing attacks */
