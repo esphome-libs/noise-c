@@ -444,6 +444,9 @@ int noise_randstate_generate_simple(uint8_t *buffer, size_t len)
 #if NOISE_USE_LIBSODIUM
     memcpy(state.chacha_k, starting_key, crypto_stream_chacha20_KEYBYTES);
     memset(state.chacha_n, 0, crypto_stream_chacha20_IETF_NONCEBYTES);
+#elif NOISE_USE_MBEDTLS
+    memcpy(state.chacha_key, starting_key, 32);
+    state.chacha_counter = 0;
 #else
     chacha_keysetup(&(state.chacha), starting_key, 256);
 #endif
