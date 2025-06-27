@@ -29,6 +29,12 @@ typedef crypto_hash_sha256_state sha256_context_t;
 #define sha256_reset(ctx) crypto_hash_sha256_init(ctx)
 #define sha256_update(ctx, pub, pub_len) crypto_hash_sha256_update(ctx, pub, pub_len)
 #define sha256_finish(ctx, hash) crypto_hash_sha256_final(ctx, hash)
+#elif NOISE_USE_MBEDTLS
+#include <mbedtls/sha256.h>
+typedef mbedtls_sha256_context sha256_context_t;
+#define sha256_reset(ctx) do { mbedtls_sha256_init(ctx); mbedtls_sha256_starts_ret(ctx, 0); } while(0)
+#define sha256_update(ctx, pub, pub_len) mbedtls_sha256_update_ret(ctx, pub, pub_len)
+#define sha256_finish(ctx, hash) do { mbedtls_sha256_finish_ret(ctx, hash); mbedtls_sha256_free(ctx); } while(0)
 #else
 #include "crypto/sha2/sha256.h"
 #endif
