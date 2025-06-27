@@ -20,7 +20,7 @@
         {
             "owner": "esphome",
             "name": "libsodium",
-            "version": "1.10018.4"
+            "version": "https://github.com/esphome/libsodium-esphome.git#update-libsodium-1.0.20"
         }
     ]
 }
