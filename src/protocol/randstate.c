@@ -93,7 +93,8 @@ struct NoiseRandState_s
     uint8_t chacha_k[crypto_stream_chacha20_KEYBYTES];
     uint8_t chacha_n[crypto_stream_chacha20_IETF_NONCEBYTES];
 #elif NOISE_USE_MBEDTLS
-    mbedtls_chacha20_context chacha;
+    uint8_t chacha_key[32];
+    uint64_t chacha_counter;
 #else
     chacha_ctx chacha;
 #endif
@@ -146,8 +147,8 @@ int noise_randstate_new(NoiseRandState **state)
     memcpy((*state)->chacha_k, starting_key, crypto_stream_chacha20_KEYBYTES);
     memset((*state)->chacha_n, 0, crypto_stream_chacha20_IETF_NONCEBYTES);
 #elif NOISE_USE_MBEDTLS
-    mbedtls_chacha20_init(&((*state)->chacha));
-    mbedtls_chacha20_setkey(&((*state)->chacha), starting_key);
+    memcpy((*state)->chacha_key, starting_key, 32);
+    (*state)->chacha_counter = 0;
 #else
     chacha_keysetup(&((*state)->chacha), starting_key, 256);
 #endif
@@ -172,9 +173,6 @@ int noise_randstate_free(NoiseRandState *state)
         return NOISE_ERROR_INVALID_PARAM;
 
     /* Clean and free the memory */
-#if NOISE_USE_MBEDTLS
-    mbedtls_chacha20_free(&(state->chacha));
-#endif
     noise_free(state, state->size);
     return NOISE_ERROR_NONE;
 }
@@ -219,9 +217,10 @@ int noise_randstate_reseed(NoiseRandState *state)
     memcpy(state->chacha_n, data + crypto_stream_chacha20_KEYBYTES, crypto_stream_chacha20_IETF_NONCEBYTES);
 #elif NOISE_USE_MBEDTLS
     uint8_t nonce[12] = {0};
-    mbedtls_chacha20_crypt(data, sizeof(data), nonce, 0, &(state->chacha), data, data);
-    mbedtls_chacha20_setkey(&(state->chacha), data);
-    /* mbedTLS doesn't store IV in context, we'll use counter in nonce */
+    PUT_UINT64_LE(nonce, state->chacha_counter);
+    mbedtls_chacha20_crypt(state->chacha_key, nonce, 0, sizeof(data), data, data);
+    memcpy(state->chacha_key, data, 32);
+    state->chacha_counter++;
 #else
     chacha_encrypt_bytes(&(state->chacha), data, data, sizeof(data));
     chacha_keysetup(&(state->chacha), data, 256);
@@ -236,8 +235,10 @@ int noise_randstate_reseed(NoiseRandState *state)
     memcpy(state->chacha_k, data, crypto_stream_chacha20_KEYBYTES);
     memcpy(state->chacha_n, data + crypto_stream_chacha20_KEYBYTES, crypto_stream_chacha20_IETF_NONCEBYTES);
 #elif NOISE_USE_MBEDTLS
-    mbedtls_chacha20_crypt(data, sizeof(data), nonce, 0, &(state->chacha), data, data);
-    mbedtls_chacha20_setkey(&(state->chacha), data);
+    PUT_UINT64_LE(nonce, state->chacha_counter);
+    mbedtls_chacha20_crypt(state->chacha_key, nonce, 0, sizeof(data), data, data);
+    memcpy(state->chacha_key, data, 32);
+    state->chacha_counter++;
 #else
     chacha_encrypt_bytes(&(state->chacha), data, data, sizeof(data));
     chacha_keysetup(&(state->chacha), data, 256);
@@ -266,6 +267,12 @@ static void noise_randstate_rekey(NoiseRandState *state)
     crypto_stream_chacha20_ietf_xor(data, data, sizeof(data), state->chacha_n, state->chacha_k);
     memcpy(state->chacha_k, data, crypto_stream_chacha20_KEYBYTES);
     memcpy(state->chacha_n, data + crypto_stream_chacha20_KEYBYTES, crypto_stream_chacha20_IETF_NONCEBYTES);
+#elif NOISE_USE_MBEDTLS
+    uint8_t nonce[12] = {0};
+    PUT_UINT64_LE(nonce, state->chacha_counter);
+    mbedtls_chacha20_crypt(state->chacha_key, nonce, 0, sizeof(data), data, data);
+    memcpy(state->chacha_key, data, 32);
+    state->chacha_counter++;
 #else
     chacha_encrypt_bytes(&(state->chacha), data, data, sizeof(data));
     chacha_keysetup(&(state->chacha), data, 256);
@@ -335,8 +342,8 @@ int noise_randstate_generate
         crypto_stream_chacha20_ietf_xor_ic(buffer, buffer, temp_len, state->chacha_n, blocks + 1, state->chacha_k);
 #elif NOISE_USE_MBEDTLS
         uint8_t nonce[12] = {0};
-        PUT_UINT64_LE(nonce, blocks);
-        mbedtls_chacha20_crypt(buffer, temp_len, nonce, 0, &(state->chacha), buffer, buffer);
+        PUT_UINT64_LE(nonce, state->chacha_counter);
+        mbedtls_chacha20_crypt(state->chacha_key, nonce, (uint32_t)blocks, temp_len, buffer, buffer);
 #else
         chacha_encrypt_bytes(&(state->chacha), buffer, buffer, temp_len);
 #endif
