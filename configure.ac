@@ -79,6 +79,11 @@ AC_ARG_WITH([openssl],
     [use openssl for crypto @<:@default=check@:>@])],
   [],
   [with_openssl=no])
+AC_ARG_WITH([mbedtls],
+  [AS_HELP_STRING([--with-mbedtls],
+    [use mbedTLS for crypto @<:@default=check@:>@])],
+  [],
+  [with_mbedtls=no])
 
 PKG_PROG_PKG_CONFIG
 AS_IF([test -n "$PKG_CONFIG"], [
@@ -93,10 +98,17 @@ AS_IF([test -n "$PKG_CONFIG"], [
     [no], [HAVE_OPENSSL=0],
     [PKG_CHECK_MODULES_STATIC([openssl], [openssl], [HAVE_OPENSSL=1], [HAVE_OPENSSL=0])])
   AM_CONDITIONAL([USE_OPENSSL], [test "$with_openssl" != no -a "$HAVE_OPENSSL" -eq 1])
+
+  AS_CASE(["$with_mbedtls"],
+    [yes], [PKG_CHECK_MODULES_STATIC([mbedtls], [mbedtls], [HAVE_MBEDTLS=1])],
+    [no], [HAVE_MBEDTLS=0],
+    [PKG_CHECK_MODULES_STATIC([mbedtls], [mbedtls], [HAVE_MBEDTLS=1], [HAVE_MBEDTLS=0])])
+  AM_CONDITIONAL([USE_MBEDTLS], [test "$with_mbedtls" != no -a "$HAVE_MBEDTLS" -eq 1])
 ], [
   AC_MSG_WARN([Can't find pkg-config. Using built-in reference crypto backend.])
   AM_CONDITIONAL([USE_LIBSODIUM],[false])
   AM_CONDITIONAL([USE_OPENSSL],[false])
+  AM_CONDITIONAL([USE_MBEDTLS],[false])
 ])
 
 AC_ARG_ENABLE(asan, AC_HELP_STRING([--enable-asan],

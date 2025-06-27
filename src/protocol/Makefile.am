@@ -27,6 +27,11 @@ ED25519_CPPFLAGS = -DED25519_CUSTOMHASH -DED25519_CUSTOMRANDOM
 AM_CPPFLAGS += $(ED25519_CPPFLAGS)
 endif
 
+if USE_MBEDTLS
+AM_CPPFLAGS += -DUSE_MBEDTLS=1
+AM_CFLAGS += $(mbedtls_CFLAGS)
+endif
+
 libnoiseprotocol_a_SOURCES = \
 	cipherstate.c \
 	dhstate.c \
@@ -76,11 +81,23 @@ libnoiseprotocol_a_SOURCES += \
 endif
 endif
 
+if USE_MBEDTLS
+libnoiseprotocol_a_SOURCES += \
+	../backend/mbedtls/cipher-chachapoly.c
+else !USE_MBEDTLS
+if USE_LIBSODIUM
+libnoiseprotocol_a_SOURCES += \
+	../backend/sodium/cipher-chachapoly.c
+else !USE_LIBSODIUM
+libnoiseprotocol_a_SOURCES += \
+	../backend/ref/cipher-chachapoly.c
+endif
+endif
+
 if USE_LIBSODIUM
 libnoiseprotocol_a_SOURCES += \
 	rand_sodium.c \
 	../backend/sodium/cipher-aesgcm.c \
-	../backend/sodium/cipher-chachapoly.c \
 	../backend/sodium/dh-curve25519.c \
 	../backend/sodium/hash-blake2b.c \
 	../backend/sodium/hash-sha256.c \
@@ -90,7 +107,6 @@ else !USE_LIBSODIUM
 libnoiseprotocol_a_SOURCES += \
 	rand_os.c \
 	../backend/ref/cipher-aesgcm.c \
-	../backend/ref/cipher-chachapoly.c \
 	../backend/ref/dh-curve25519.c \
 	../backend/ref/hash-blake2b.c \
 	../backend/ref/hash-sha256.c \

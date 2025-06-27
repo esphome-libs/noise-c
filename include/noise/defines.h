@@ -40,11 +40,23 @@
 #define NOISE_USE_SIGN 0
 #endif
 
+#ifndef NOISE_USE_MBEDTLS
+#ifdef MBEDTLS_CHACHAPOLY_C
+#define NOISE_USE_MBEDTLS 1
+#else
+#define NOISE_USE_MBEDTLS 0
+#endif
+#endif
+
 #ifndef NOISE_USE_REFERENCE_BACKEND
 #define NOISE_USE_REFERENCE_BACKEND 0
 #endif
 #ifndef NOISE_USE_LIBSODIUM
+#if NOISE_USE_MBEDTLS
+#define NOISE_USE_LIBSODIUM 0
+#else
 #define NOISE_USE_LIBSODIUM 1
+#endif
 #endif
 #ifndef NOISE_USE_OPENSSL
 #define NOISE_USE_OPENSSL 0
