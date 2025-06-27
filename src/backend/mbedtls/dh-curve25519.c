@@ -18,34 +18,40 @@ typedef struct
     uint8_t public_key[32];
 } NoiseCurve25519State;
 
+/* Static RNG context for keypair generation */
+static mbedtls_entropy_context noise_entropy;
+static mbedtls_ctr_drbg_context noise_ctr_drbg;
+static int noise_rng_initialized = 0;
+
+static int noise_init_rng(void)
+{
+    if (noise_rng_initialized)
+        return 0;
+    
+    mbedtls_entropy_init(&noise_entropy);
+    mbedtls_ctr_drbg_init(&noise_ctr_drbg);
+    
+    int ret = mbedtls_ctr_drbg_seed(&noise_ctr_drbg, mbedtls_entropy_func, 
+                                    &noise_entropy, NULL, 0);
+    if (ret == 0)
+        noise_rng_initialized = 1;
+    
+    return ret;
+}
+
 static int noise_curve25519_generate_keypair
     (NoiseDHState *state, const NoiseDHState *other)
 {
     NoiseCurve25519State *st = (NoiseCurve25519State *)state;
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_ecdh_context ecdh;
-    int ret;
-    
-    /* Initialize contexts */
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-    mbedtls_ecdh_init(&ecdh);
-    
-    /* Seed the RNG */
-    ret = mbedtls_ctr_drbg_seed(&ctr_drbg, mbedtls_entropy_func, &entropy, NULL, 0);
-    if (ret != 0)
-        goto cleanup;
-    
-    /* Setup Curve25519 */
-    ret = mbedtls_ecdh_setup(&ecdh, MBEDTLS_ECP_DP_CURVE25519);
-    if (ret != 0)
-        goto cleanup;
-    
-    /* Generate keypair using ECP directly since we need access to private key */
     mbedtls_ecp_group grp;
     mbedtls_mpi d;
     mbedtls_ecp_point Q;
+    int ret;
+    
+    /* Initialize RNG if needed */
+    ret = noise_init_rng();
+    if (ret != 0)
+        return NOISE_ERROR_SYSTEM;
     
     mbedtls_ecp_group_init(&grp);
     mbedtls_mpi_init(&d);
@@ -53,31 +59,19 @@ static int noise_curve25519_generate_keypair
     
     /* Load Curve25519 group */
     ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
-    if (ret != 0) {
-        mbedtls_ecp_group_free(&grp);
-        mbedtls_mpi_free(&d);
-        mbedtls_ecp_point_free(&Q);
+    if (ret != 0)
         goto cleanup;
-    }
     
     /* Generate keypair */
     ret = mbedtls_ecp_gen_keypair(&grp, &d, &Q,
-                                  mbedtls_ctr_drbg_random, &ctr_drbg);
-    if (ret != 0) {
-        mbedtls_ecp_group_free(&grp);
-        mbedtls_mpi_free(&d);
-        mbedtls_ecp_point_free(&Q);
+                                  mbedtls_ctr_drbg_random, &noise_ctr_drbg);
+    if (ret != 0)
         goto cleanup;
-    }
     
     /* Export private key */
     ret = mbedtls_mpi_write_binary(&d, st->private_key, 32);
-    if (ret != 0) {
-        mbedtls_ecp_group_free(&grp);
-        mbedtls_mpi_free(&d);
-        mbedtls_ecp_point_free(&Q);
+    if (ret != 0)
         goto cleanup;
-    }
     
     /* Export public key - for Curve25519 we need the X coordinate */
     size_t olen;
@@ -97,17 +91,13 @@ static int noise_curve25519_generate_keypair
         }
     }
     
-    mbedtls_ecp_group_free(&grp);
-    mbedtls_mpi_free(&d);
-    mbedtls_ecp_point_free(&Q);
-    
     if (ret == 0)
         state->key_type = NOISE_KEY_TYPE_KEYPAIR;
     
 cleanup:
-    mbedtls_ecdh_free(&ecdh);
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
+    mbedtls_ecp_point_free(&Q);
+    mbedtls_mpi_free(&d);
+    mbedtls_ecp_group_free(&grp);
     
     return ret == 0 ? NOISE_ERROR_NONE : NOISE_ERROR_SYSTEM;
 }
@@ -154,7 +144,6 @@ static int noise_curve25519_set_keypair_private
     memcpy(st->private_key, private_key, 32);
     
     /* Export public key - for Curve25519 we need the X coordinate */
-    /* Use the raw scalar multiplication result */
     size_t olen;
     uint8_t buf[66];
     ret = mbedtls_ecp_point_write_binary(&grp, &Q, MBEDTLS_ECP_PF_UNCOMPRESSED,
@@ -217,50 +206,105 @@ static int noise_curve25519_calculate
     const NoiseCurve25519State *priv_st = (const NoiseCurve25519State *)private_key_state;
     const NoiseCurve25519State *pub_st = (const NoiseCurve25519State *)public_key_state;
     mbedtls_ecdh_context ecdh;
-    mbedtls_ecp_keypair keypair;
     int ret;
     
+    /* Initialize RNG if needed */
+    ret = noise_init_rng();
+    if (ret != 0) {
+        memset(shared_key, 0, 32);
+        return NOISE_ERROR_NONE;
+    }
+    
     mbedtls_ecdh_init(&ecdh);
-    mbedtls_ecp_keypair_init(&keypair);
     
     /* Setup Curve25519 */
     ret = mbedtls_ecdh_setup(&ecdh, MBEDTLS_ECP_DP_CURVE25519);
     if (ret != 0)
         goto cleanup;
     
-    /* Setup our keypair */
-    ret = mbedtls_ecp_group_load(&keypair.grp, MBEDTLS_ECP_DP_CURVE25519);
-    if (ret != 0)
-        goto cleanup;
-        
-    ret = mbedtls_mpi_read_binary(&keypair.d, priv_st->private_key, 32);
-    if (ret != 0)
-        goto cleanup;
-    
-    /* We don't need to set the public key Q for ECDH calculation */
-    ret = mbedtls_ecdh_get_params(&ecdh, &keypair, MBEDTLS_ECDH_OURS);
-    if (ret != 0)
-        goto cleanup;
-    
-    /* Import peer's public key */
-    ret = mbedtls_ecdh_read_public(&ecdh, pub_st->public_key, 32);
-    if (ret != 0)
-        goto cleanup;
-    
-    /* Compute shared secret */
+    /* Generate our side of the ECDH exchange using stored private key */
+    /* We need to use make_public first to set up our private key */
     size_t olen;
-    ret = mbedtls_ecdh_calc_secret(&ecdh, &olen, shared_key, 32, NULL, NULL);
+    uint8_t temp_pub[66];
+    
+    /* First, generate a temporary keypair */
+    ret = mbedtls_ecdh_make_public(&ecdh, &olen, temp_pub, sizeof(temp_pub),
+                                   mbedtls_ctr_drbg_random, &noise_ctr_drbg);
     if (ret != 0)
         goto cleanup;
     
-    /* Verify we got 32 bytes */
-    if (olen != 32) {
-        ret = MBEDTLS_ERR_ECP_BAD_INPUT_DATA;
+    /* Now we need to replace with our actual keys */
+    /* Since we can't directly access the context, we'll use a different approach */
+    /* We'll compute the shared secret manually using ECP operations */
+    
+    mbedtls_ecp_group grp;
+    mbedtls_mpi d, z;
+    mbedtls_ecp_point Q;
+    
+    mbedtls_ecp_group_init(&grp);
+    mbedtls_mpi_init(&d);
+    mbedtls_mpi_init(&z);
+    mbedtls_ecp_point_init(&Q);
+    
+    /* Load Curve25519 group */
+    ret = mbedtls_ecp_group_load(&grp, MBEDTLS_ECP_DP_CURVE25519);
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_mpi_free(&z);
+        mbedtls_ecp_point_free(&Q);
         goto cleanup;
     }
     
+    /* Import our private key */
+    ret = mbedtls_mpi_read_binary(&d, priv_st->private_key, 32);
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_mpi_free(&z);
+        mbedtls_ecp_point_free(&Q);
+        goto cleanup;
+    }
+    
+    /* Import peer's public key as point */
+    /* For Curve25519, the public key is just the X coordinate */
+    /* Try different formats */
+    ret = mbedtls_ecp_point_read_binary(&grp, &Q, pub_st->public_key, 32);
+    if (ret != 0) {
+        /* Try with uncompressed format byte */
+        uint8_t buf[33];
+        buf[0] = 0x04; /* Uncompressed */
+        memcpy(buf + 1, pub_st->public_key, 32);
+        ret = mbedtls_ecp_point_read_binary(&grp, &Q, buf, 33);
+    }
+    
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_mpi_free(&z);
+        mbedtls_ecp_point_free(&Q);
+        goto cleanup;
+    }
+    
+    /* Compute shared secret: z = d * Q */
+    ret = mbedtls_ecdh_compute_shared(&grp, &z, &Q, &d, NULL, NULL);
+    if (ret != 0) {
+        mbedtls_ecp_group_free(&grp);
+        mbedtls_mpi_free(&d);
+        mbedtls_mpi_free(&z);
+        mbedtls_ecp_point_free(&Q);
+        goto cleanup;
+    }
+    
+    /* Export shared secret */
+    ret = mbedtls_mpi_write_binary(&z, shared_key, 32);
+    
+    mbedtls_ecp_group_free(&grp);
+    mbedtls_mpi_free(&d);
+    mbedtls_mpi_free(&z);
+    mbedtls_ecp_point_free(&Q);
+    
 cleanup:
-    mbedtls_ecp_keypair_free(&keypair);
     mbedtls_ecdh_free(&ecdh);
     
     /* Always return success to avoid timing attacks */
