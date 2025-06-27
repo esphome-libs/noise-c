@@ -83,7 +83,10 @@ endif
 
 if USE_MBEDTLS
 libnoiseprotocol_a_SOURCES += \
-	../backend/mbedtls/cipher-chachapoly.c
+	../backend/mbedtls/cipher-chachapoly.c \
+	../backend/mbedtls/hash-sha256.c \
+	../backend/mbedtls/dh-curve25519.c \
+	../crypto/donna/curve25519-donna.c
 else !USE_MBEDTLS
 if USE_LIBSODIUM
 libnoiseprotocol_a_SOURCES += \
@@ -105,7 +108,23 @@ libnoiseprotocol_a_SOURCES += \
 	../backend/sodium/sign-ed25519.c
 else !USE_LIBSODIUM
 libnoiseprotocol_a_SOURCES += \
-	rand_os.c \
+	rand_os.c
+
+if USE_MBEDTLS
+# When using mbedTLS but not libsodium, we still need some reference implementations
+libnoiseprotocol_a_SOURCES += \
+	../backend/ref/cipher-aesgcm.c \
+	../backend/ref/hash-blake2b.c \
+	../backend/ref/hash-sha512.c \
+	../backend/ref/sign-ed25519.c \
+	../crypto/aes/rijndael-alg-fst.c \
+	../crypto/blake2/blake2b.c \
+	../crypto/ghash/ghash.c \
+	../crypto/sha2/sha512.c \
+	../crypto/ed25519/ed25519.c
+else !USE_MBEDTLS
+# Full reference implementation when neither libsodium nor mbedTLS is used
+libnoiseprotocol_a_SOURCES += \
 	../backend/ref/cipher-aesgcm.c \
 	../backend/ref/dh-curve25519.c \
 	../backend/ref/hash-blake2b.c \
@@ -122,4 +141,5 @@ libnoiseprotocol_a_SOURCES += \
 	../crypto/sha2/sha256.c \
 	../crypto/sha2/sha512.c \
 	../crypto/ed25519/ed25519.c
+endif
 endif
