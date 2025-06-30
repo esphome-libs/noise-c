@@ -18,9 +18,9 @@
     },
     "dependencies": [
         {
-            "owner": "bdraco",
+            "owner": "esphome",
             "name": "libsodium",
-            "version": "1.10020.2"
+            "version": "1.10020.3"
         }
     ]
 }
