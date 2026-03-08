@@ -1,6 +1,6 @@
 {
     "name": "noise-c",
-    "version": "0.1.10",
+    "version": "0.1.11",
     "description": "noise-c",
     "keywords": "noise-c",
     "repository": {
@@ -20,7 +20,7 @@
         {
             "owner": "esphome",
             "name": "libsodium",
-            "version": "1.10020.7"
+            "version": "1.10021.0"
         }
     ]
 }
