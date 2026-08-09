@@ -1,5 +1,4 @@
-idf_component_register(
-  SRCS
+set(NOISE_C_SRCS
   "src/backend/openssl/cipher-aesgcm.c"
   "src/backend/ref/cipher-aesgcm.c"
   "src/backend/ref/cipher-chachapoly.c"
@@ -36,9 +35,29 @@ idf_component_register(
   "src/protocol/signstate.c"
   "src/protocol/symmetricstate.c"
   "src/protocol/util.c"
-  INCLUDE_DIRS
-  "include"
-  "src"
-  REQUIRES
-  esphome__libsodium
 )
+
+if(ESP_PLATFORM)
+  idf_component_register(
+    SRCS ${NOISE_C_SRCS}
+    INCLUDE_DIRS "include" "src"
+    REQUIRES esphome__libsodium
+  )
+else()
+  cmake_minimum_required(VERSION 3.13)
+
+  add_library(noise_c STATIC ${NOISE_C_SRCS})
+  add_library(esphome::noise_c ALIAS noise_c)
+
+  target_include_directories(noise_c PUBLIC
+    "${CMAKE_CURRENT_LIST_DIR}/include"
+    "${CMAKE_CURRENT_LIST_DIR}/src"
+  )
+
+  # backend is a compile-time choice made by the consumer via the NOISE_USE_*
+  # macros in include/noise/defines.h; the default backend is libsodium, so
+  # link a libsodium target if the consumer has already defined one.
+  if(TARGET sodium)
+    target_link_libraries(noise_c PUBLIC sodium)
+  endif()
+endif()
