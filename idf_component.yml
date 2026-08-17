@@ -2,4 +2,4 @@ description: noise-c
 version: "0.1.18"
 repository: https://github.com/esphome/noise-c.git
 dependencies:
-  esphome/libsodium: "1.10021.2"
+  esphome/libsodium: "1.10021.3"
