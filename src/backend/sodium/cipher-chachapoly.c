@@ -72,13 +72,12 @@ static int noise_chachapoly_encrypt
     uint8_t block[64] __attribute__((aligned(4)));
 
     /* Poly1305 key generation and payload encryption share one cipher
-       setup. block is deliberately not wiped: it is derived from the
-       session key that stays resident in the cipher state, and there is
-       no memory segmentation on these targets. */
+       setup; the key in block is cleared as soon as the MAC is done */
     crypto_stream_chacha20_ietf_session_block0_xor
         (&(st->chacha_st), block, data, data, len, state->n);
     crypto_onetimeauth_poly1305_aead_mac
         (data + len, ad, ad_len, data, len, block);
+    sodium_memzero(block, 32);
     return NOISE_ERROR_NONE;
 }
 
@@ -93,8 +92,13 @@ static int noise_chachapoly_decrypt
     crypto_stream_chacha20_ietf_session_block0_xor
         (&(st->chacha_st), block, NULL, NULL, 0, state->n);
     crypto_onetimeauth_poly1305_aead_mac(mac, ad, ad_len, data, len, block);
-    if (!noise_is_equal(mac, data + len, 16))
+    sodium_memzero(block, 32);
+    if (!noise_is_equal(mac, data + len, 16)) {
+        /* the computed tag is valid for a nonce that stays live, since n
+           is not incremented on MAC failure */
+        sodium_memzero(mac, 16);
         return NOISE_ERROR_MAC_FAILURE;
+    }
     /* The session state's block counter is already at 1 after the key
        generation call above */
     crypto_stream_chacha20_ietf_session_xor(&(st->chacha_st), data, data, len);
