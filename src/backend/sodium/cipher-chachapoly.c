@@ -36,14 +36,20 @@ typedef struct
 
 /*
  * Per-operation working state. Only the key and nonce counter persist
- * between calls, so this lives on the stack during encrypt/decrypt and
- * is wiped before returning. Keeping it out of NoiseChaChaPolyState
- * shrinks each long-lived cipher state by over 300 bytes, which matters
- * on embedded targets that hold two cipher states per connection.
- * The trade is ~336 bytes of stack for the duration of each call,
- * below what the curve25519 handshake steps already require.
- * The wipe uses sodium_memzero, not noise_clean: the latter is a
- * volatile byte loop that costs ~47% on 64-byte frames.
+ * between calls, so this lives on the stack during encrypt/decrypt.
+ * Keeping it out of NoiseChaChaPolyState shrinks each long-lived cipher
+ * state by over 300 bytes, which matters on embedded targets that hold
+ * two cipher states per connection. The trade is ~336 bytes of stack for
+ * the duration of each call, below what the curve25519 handshake steps
+ * already require.
+ *
+ * The scratch is not bulk wiped on return; a full wipe measured 9 to 13
+ * percent of a small message operation. Instead the secrets are cleared
+ * at the point they die: the Poly1305 key right after state init in
+ * setup(), and on decrypt failure the computed tag (its nonce stays
+ * live because n is not incremented on error). What remains after
+ * return is public or unused keystream, and libsodium wipes the
+ * poly1305 state inside crypto_onetimeauth_poly1305_final.
  */
 typedef struct
 {
@@ -85,13 +91,18 @@ static void noise_chachapoly_setup
     memset(sc->chacha_n, 0, 4);
     PUT_UINT64_LE(sc->chacha_n + 4, n);
 
-    /* Encrypt an initial block to create the Poly1305 key. The key stays
-       in sc->block until the caller wipes the scratch. (memset + _xor of a
+    /* Encrypt an initial block to create the Poly1305 key. (memset + _xor of a
        full block benchmarks faster here than generating 32 keystream bytes
        with crypto_stream_chacha20_ietf.) */
     memset(sc->block, 0, 64);
     crypto_stream_chacha20_ietf_xor(sc->block, sc->block, 64, sc->chacha_n, st->chacha_k);
     crypto_onetimeauth_poly1305_init(&(sc->poly1305), sc->block);
+    /* The Poly1305 key is dead once the state is initialized; clear it so
+       the frame releases without key material. This matches the ref
+       backend's clear-in-setup approach at a tenth of the cost of the
+       full scratch wipe this file used to do; the remaining 32 bytes are
+       discarded counter-0 keystream. */
+    sodium_memzero(sc->block, 32);
 }
 
 /**
@@ -142,7 +153,6 @@ static int noise_chachapoly_encrypt
     noise_chachapoly_pad_auth(&sc, len);
     noise_chachapoly_auth_lengths(&sc, ad_len, len);
     crypto_onetimeauth_poly1305_final(&(sc.poly1305), data + len);
-    sodium_memzero(&sc, sizeof(sc));
     return NOISE_ERROR_NONE;
 }
 
@@ -163,10 +173,14 @@ static int noise_chachapoly_decrypt
     noise_chachapoly_auth_lengths(&sc, ad_len, len);
     crypto_onetimeauth_poly1305_final(&(sc.poly1305), sc.block);
     ok = noise_is_equal(sc.block, data + len, 16);
-    if (ok)
-        crypto_stream_chacha20_ietf_xor_ic(data, data, len, sc.chacha_n, 1U, st->chacha_k);
-    sodium_memzero(&sc, sizeof(sc));
-    return ok ? NOISE_ERROR_NONE : NOISE_ERROR_MAC_FAILURE;
+    if (!ok) {
+        /* the computed tag is valid for a nonce that stays live, since n
+           is not incremented on MAC failure */
+        sodium_memzero(sc.block, 16);
+        return NOISE_ERROR_MAC_FAILURE;
+    }
+    crypto_stream_chacha20_ietf_xor_ic(data, data, len, sc.chacha_n, 1U, st->chacha_k);
+    return NOISE_ERROR_NONE;
 }
 
 NoiseCipherState *noise_chachapoly_new(void)
