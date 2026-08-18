@@ -35,7 +35,7 @@
 #endif
 
 #if defined(SODIUM_ESPHOME_NOISE_FAST_PATH) && \
-    SODIUM_ESPHOME_NOISE_FAST_PATH >= 1 && \
+    SODIUM_ESPHOME_NOISE_FAST_PATH == 1 && \
     !defined(NOISE_DISABLE_SODIUM_FAST_PATH)
 
 /*
@@ -43,7 +43,9 @@
  * loaded once per session, the Poly1305 key block and the payload share one
  * cipher pass, and the whole MAC transcript is one call. The aead_mac
  * entry point accepts a NULL ad when ad_len is 0, so the ad branch needs
- * no guard here.
+ * no guard here, and block0_xor accepts NULL in and out pointers when len
+ * is 0, deriving only the key block and leaving the counter at 1 for the
+ * decrypt payload pass.
  *
  * To exercise this path off target, add_subdirectory this repo and the
  * esphome libsodium port (patches applied) into one CMake build; the port
@@ -51,9 +53,10 @@
  * test then runs the RFC 7539 vector through the fast path.
  *
  * SODIUM_ESPHOME_NOISE_FAST_PATH is a version number; the port bumps it if
- * the semantics of the session entry points ever change, which downgrades
- * this file to the fallback instead of miscomputing. Define
- * NOISE_DISABLE_SODIUM_FAST_PATH to force the fallback.
+ * the semantics of the session entry points ever change, and the exact
+ * match above downgrades this file to the fallback until it is updated
+ * for the new semantics on purpose. Define NOISE_DISABLE_SODIUM_FAST_PATH
+ * to force the fallback.
  */
 
 typedef struct
