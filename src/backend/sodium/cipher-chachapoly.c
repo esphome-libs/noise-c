@@ -43,15 +43,13 @@ typedef struct
  * the duration of each call, below what the curve25519 handshake steps
  * already require.
  *
- * The scratch is deliberately not wiped on return. The nonce is public
- * and libsodium wipes the poly1305 state inside
- * crypto_onetimeauth_poly1305_final, leaving only the per-message
- * Poly1305 key in block. That key is single use (each message has a
- * fresh nonce) and is derived from the session key held in the cipher
- * state, and these firmware targets run one program in one address
- * space, so stale stack is only reachable by an attacker who can
- * already read live memory. A full wipe here measured 9 to 13 percent
- * of a small message operation.
+ * The scratch is not bulk wiped on return; a full wipe measured 9 to 13
+ * percent of a small message operation. Instead the secrets are cleared
+ * at the point they die: the Poly1305 key right after state init in
+ * setup(), and on decrypt failure the computed tag (its nonce stays
+ * live because n is not incremented on error). What remains after
+ * return is public or unused keystream, and libsodium wipes the
+ * poly1305 state inside crypto_onetimeauth_poly1305_final.
  */
 typedef struct
 {
@@ -100,6 +98,11 @@ static void noise_chachapoly_setup
     memset(sc->block, 0, 64);
     crypto_stream_chacha20_ietf_xor(sc->block, sc->block, 64, sc->chacha_n, st->chacha_k);
     crypto_onetimeauth_poly1305_init(&(sc->poly1305), sc->block);
+    /* The Poly1305 key is dead once the state is initialized; clear it so
+       the frame releases without key material (the other 32 bytes are
+       unused keystream). This matches the ref backend and costs a tenth
+       of the full scratch wipe this file used to do. */
+    sodium_memzero(sc->block, 32);
 }
 
 /**
@@ -170,9 +173,14 @@ static int noise_chachapoly_decrypt
     noise_chachapoly_auth_lengths(&sc, ad_len, len);
     crypto_onetimeauth_poly1305_final(&(sc.poly1305), sc.block);
     ok = noise_is_equal(sc.block, data + len, 16);
-    if (ok)
-        crypto_stream_chacha20_ietf_xor_ic(data, data, len, sc.chacha_n, 1U, st->chacha_k);
-    return ok ? NOISE_ERROR_NONE : NOISE_ERROR_MAC_FAILURE;
+    if (!ok) {
+        /* the computed tag is valid for a nonce that stays live, since n
+           is not incremented on MAC failure */
+        sodium_memzero(sc.block, 16);
+        return NOISE_ERROR_MAC_FAILURE;
+    }
+    crypto_stream_chacha20_ietf_xor_ic(data, data, len, sc.chacha_n, 1U, st->chacha_k);
+    return NOISE_ERROR_NONE;
 }
 
 NoiseCipherState *noise_chachapoly_new(void)
