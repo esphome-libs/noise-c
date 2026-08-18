@@ -36,8 +36,14 @@ typedef struct
 
 /*
  * Per-operation working state. Only the key and nonce counter persist
- * between calls, so this lives on the stack during encrypt/decrypt and
- * is wiped before returning. Keeping it out of NoiseChaChaPolyState
+ * between calls, so this lives on the stack during encrypt/decrypt.
+ * The scratch is deliberately not wiped on return: the poly1305 state is
+ * already wiped inside crypto_onetimeauth_poly1305_final, the nonce is
+ * public, and the per-message Poly1305 key in block is derived from the
+ * session key that stays resident in the cipher state anyway; on a single
+ * address space firmware target a stack wipe adds cost without closing
+ * any exposure the resident session key does not already have.
+ * Keeping it out of NoiseChaChaPolyState
  * shrinks each long-lived cipher state by over 300 bytes, which matters
  * on embedded targets that hold two cipher states per connection.
  * The trade is ~336 bytes of stack for the duration of each call,
@@ -142,7 +148,6 @@ static int noise_chachapoly_encrypt
     noise_chachapoly_pad_auth(&sc, len);
     noise_chachapoly_auth_lengths(&sc, ad_len, len);
     crypto_onetimeauth_poly1305_final(&(sc.poly1305), data + len);
-    sodium_memzero(&sc, sizeof(sc));
     return NOISE_ERROR_NONE;
 }
 
@@ -165,7 +170,6 @@ static int noise_chachapoly_decrypt
     ok = noise_is_equal(sc.block, data + len, 16);
     if (ok)
         crypto_stream_chacha20_ietf_xor_ic(data, data, len, sc.chacha_n, 1U, st->chacha_k);
-    sodium_memzero(&sc, sizeof(sc));
     return ok ? NOISE_ERROR_NONE : NOISE_ERROR_MAC_FAILURE;
 }
 
