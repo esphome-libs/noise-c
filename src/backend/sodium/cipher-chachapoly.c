@@ -41,7 +41,14 @@
 /*
  * Fast path for the esphome libsodium port: the ChaCha20 key schedule is
  * loaded once per session, the Poly1305 key block and the payload share one
- * cipher pass, and the whole MAC transcript is one call.
+ * cipher pass, and the whole MAC transcript is one call. The aead_mac
+ * entry point accepts a NULL ad when ad_len is 0, so the ad branch needs
+ * no guard here.
+ *
+ * To exercise this path off target, add_subdirectory this repo and the
+ * esphome libsodium port (patches applied) into one CMake build; the port
+ * exports the `sodium` target this repo links, and the cipherstate unit
+ * test then runs the RFC 7539 vector through the fast path.
  *
  * SODIUM_ESPHOME_NOISE_FAST_PATH is a version number; the port bumps it if
  * the semantics of the session entry points ever change, which downgrades
