@@ -34,12 +34,19 @@
 # endif
 #endif
 
-#ifdef SODIUM_ESPHOME_NOISE_FAST_PATH
+#if defined(SODIUM_ESPHOME_NOISE_FAST_PATH) && \
+    SODIUM_ESPHOME_NOISE_FAST_PATH >= 1 && \
+    !defined(NOISE_DISABLE_SODIUM_FAST_PATH)
 
 /*
  * Fast path for the esphome libsodium port: the ChaCha20 key schedule is
  * loaded once per session, the Poly1305 key block and the payload share one
  * cipher pass, and the whole MAC transcript is one call.
+ *
+ * SODIUM_ESPHOME_NOISE_FAST_PATH is a version number; the port bumps it if
+ * the semantics of the session entry points ever change, which downgrades
+ * this file to the fallback instead of miscomputing. Define
+ * NOISE_DISABLE_SODIUM_FAST_PATH to force the fallback.
  */
 
 typedef struct
