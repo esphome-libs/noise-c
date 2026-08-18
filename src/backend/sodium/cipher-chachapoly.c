@@ -91,17 +91,17 @@ static void noise_chachapoly_setup
     memset(sc->chacha_n, 0, 4);
     PUT_UINT64_LE(sc->chacha_n + 4, n);
 
-    /* Encrypt an initial block to create the Poly1305 key, which stays
-       in sc->block for the rest of the operation. (memset + _xor of a
+    /* Encrypt an initial block to create the Poly1305 key. (memset + _xor of a
        full block benchmarks faster here than generating 32 keystream bytes
        with crypto_stream_chacha20_ietf.) */
     memset(sc->block, 0, 64);
     crypto_stream_chacha20_ietf_xor(sc->block, sc->block, 64, sc->chacha_n, st->chacha_k);
     crypto_onetimeauth_poly1305_init(&(sc->poly1305), sc->block);
     /* The Poly1305 key is dead once the state is initialized; clear it so
-       the frame releases without key material (the other 32 bytes are
-       unused keystream). This matches the ref backend and costs a tenth
-       of the full scratch wipe this file used to do. */
+       the frame releases without key material. This matches the ref
+       backend's clear-in-setup approach at a tenth of the cost of the
+       full scratch wipe this file used to do; the remaining 32 bytes are
+       discarded counter-0 keystream. */
     sodium_memzero(sc->block, 32);
 }
 
