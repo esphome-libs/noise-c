@@ -28,6 +28,74 @@
 #include <sodium.h>
 #include <string.h>
 
+#if defined(__has_include)
+# if __has_include(<sodium/sodium_esphome.h>)
+#  include <sodium/sodium_esphome.h>
+# endif
+#endif
+
+#ifdef SODIUM_ESPHOME_NOISE_FAST_PATH
+
+/*
+ * Fast path for the esphome libsodium port: the ChaCha20 key schedule is
+ * loaded once per session, the Poly1305 key block and the payload share one
+ * cipher pass, and the whole MAC transcript is one call.
+ */
+
+typedef struct
+{
+    struct NoiseCipherState_s parent;
+    /* Session persistent ChaCha20 key schedule; loaded once per key, only
+       the nonce and counter words are rewritten per message. */
+    crypto_stream_chacha20_ietf_session_state chacha_st;
+} NoiseChaChaPolyState;
+
+static void noise_chachapoly_init_key
+    (NoiseCipherState *state, const uint8_t *key)
+{
+    NoiseChaChaPolyState *st = (NoiseChaChaPolyState *)state;
+    crypto_stream_chacha20_ietf_session_init(&(st->chacha_st), key);
+}
+
+static int noise_chachapoly_encrypt
+    (NoiseCipherState *state, const uint8_t *ad, size_t ad_len,
+     uint8_t *data, size_t len)
+{
+    NoiseChaChaPolyState *st = (NoiseChaChaPolyState *)state;
+    uint8_t block[64] __attribute__((aligned(4)));
+
+    /* Poly1305 key generation and payload encryption share one cipher
+       setup. block is deliberately not wiped: it is derived from the
+       session key that stays resident in the cipher state, and there is
+       no memory segmentation on these targets. */
+    crypto_stream_chacha20_ietf_session_block0_xor
+        (&(st->chacha_st), block, data, data, len, state->n);
+    crypto_onetimeauth_poly1305_aead_mac
+        (data + len, ad, ad_len, data, len, block);
+    return NOISE_ERROR_NONE;
+}
+
+static int noise_chachapoly_decrypt
+    (NoiseCipherState *state, const uint8_t *ad, size_t ad_len,
+     uint8_t *data, size_t len)
+{
+    NoiseChaChaPolyState *st = (NoiseChaChaPolyState *)state;
+    uint8_t block[64] __attribute__((aligned(4)));
+    uint8_t mac[16];
+
+    crypto_stream_chacha20_ietf_session_block0_xor
+        (&(st->chacha_st), block, NULL, NULL, 0, state->n);
+    crypto_onetimeauth_poly1305_aead_mac(mac, ad, ad_len, data, len, block);
+    if (!noise_is_equal(mac, data + len, 16))
+        return NOISE_ERROR_MAC_FAILURE;
+    /* The session state's block counter is already at 1 after the key
+       generation call above */
+    crypto_stream_chacha20_ietf_session_xor(&(st->chacha_st), data, data, len);
+    return NOISE_ERROR_NONE;
+}
+
+#else /* stock libsodium fallback */
+
 typedef struct
 {
     struct NoiseCipherState_s parent;
@@ -182,6 +250,8 @@ static int noise_chachapoly_decrypt
     crypto_stream_chacha20_ietf_xor_ic(data, data, len, sc.chacha_n, 1U, st->chacha_k);
     return NOISE_ERROR_NONE;
 }
+
+#endif /* stock libsodium fallback */
 
 NoiseCipherState *noise_chachapoly_new(void)
 {
