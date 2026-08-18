@@ -35,6 +35,13 @@
 #endif
 
 #if defined(SODIUM_ESPHOME_NOISE_FAST_PATH) && \
+    SODIUM_ESPHOME_NOISE_FAST_PATH != 1 && \
+    !defined(NOISE_DISABLE_SODIUM_FAST_PATH)
+#pragma message( \
+    "noise-c: sodium fast path disabled, unrecognised SODIUM_ESPHOME_NOISE_FAST_PATH version")
+#endif
+
+#if defined(SODIUM_ESPHOME_NOISE_FAST_PATH) && \
     SODIUM_ESPHOME_NOISE_FAST_PATH == 1 && \
     !defined(NOISE_DISABLE_SODIUM_FAST_PATH)
 
