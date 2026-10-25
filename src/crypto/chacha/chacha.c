@@ -79,7 +79,14 @@ void chacha_keysetup(chacha_ctx *x, const uint8_t *k, uint32_t kbits)
     static const char tag128[] = "expand 16-byte k";
     static const char tag256[] = "expand 32-byte k";
     if (kbits == 256) {
+#ifdef USE_VECTOR_MATH
         memcpy(x->input, tag256, 16);
+#else
+        x->input[0] = fromLittle((const uint8_t *)tag256);
+        x->input[1] = fromLittle((const uint8_t *)tag256 + 4);
+        x->input[2] = fromLittle((const uint8_t *)tag256 + 8);
+        x->input[3] = fromLittle((const uint8_t *)tag256 + 12);
+#endif
 #ifdef USE_VECTOR_MATH
         x->input[1] = fromLittleVec(k);
         x->input[2] = fromLittleVec(k + 16);
@@ -94,7 +101,14 @@ void chacha_keysetup(chacha_ctx *x, const uint8_t *k, uint32_t kbits)
         x->input[11] = fromLittle(k + 28);
 #endif
     } else {
+#ifdef USE_VECTOR_MATH
         memcpy(x->input, tag128, 16);
+#else
+        x->input[0] = fromLittle((const uint8_t *)tag128);
+        x->input[1] = fromLittle((const uint8_t *)tag128 + 4);
+        x->input[2] = fromLittle((const uint8_t *)tag128 + 8);
+        x->input[3] = fromLittle((const uint8_t *)tag128 + 12);
+#endif
 #ifdef USE_VECTOR_MATH
         x->input[2] = x->input[1] = fromLittleVec(k);
 #else

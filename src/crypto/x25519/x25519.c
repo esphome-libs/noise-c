@@ -22,10 +22,12 @@
 #define X25519_SUPPORT_SIGN 0
 #define X25519_MEMCPY_PARAMS 1
 #define X25519_USE_POWER_CHAIN 1
-#if BYTE_ORDER == LITTLE_ENDIAN
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 static inline uint32_t eswap_letoh_32(uint32_t w) { return w; }
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+static inline uint32_t eswap_letoh_32(uint32_t w) { return __builtin_bswap32(w); }
 #else
-#error "Fix eswap() on non-little-endian machine"
+#error "Fix eswap() on this machine"
 #endif
 
 #if X25519_WBITS == 64
@@ -237,7 +239,7 @@ static void x25519_core(fe xs[5], const uint8_t scalar[X25519_BYTES], const uint
 #if X25519_MEMCPY_PARAMS
     fe x1i;
     swapin(x1i,x1);
-    x1 = (const uint8_t *)x1;
+    x1 = (const uint8_t *)x1i;
 #endif
     limb_t swap = 0;
     limb_t *x2 = xs[0],*x3=xs[2],*z3=xs[3];
